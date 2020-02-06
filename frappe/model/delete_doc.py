@@ -16,9 +16,12 @@ from frappe.core.doctype.file.file import remove_all
 from frappe.utils.password import delete_all_passwords_for
 from frappe.model.naming import revert_series_if_last
 from frappe.utils.global_search import delete_for_document
+from frappe.desk.doctype.tag.tag import delete_tags_for_document
+from frappe.exceptions import FileNotFoundError
+from frappe.model.document import make_event_update_log, check_doctype_has_consumers
 
-
-doctypes_to_skip = ("Communication", "ToDo", "DocShare", "Email Unsubscribe", "Activity Log", "File", "Version", "Document Follow", "Comment" , "View Log")
+doctypes_to_skip = ("Communication", "ToDo", "DocShare", "Email Unsubscribe", "Activity Log", "File",
+	"Version", "Document Follow", "Comment" , "View Log", "Tag Link", "Notification Log", "Email Queue")
 
 def delete_doc(doctype=None, name=None, force=0, ignore_doctypes=None, for_reload=False,
 	ignore_permissions=False, flags=None, ignore_on_trash=False, ignore_missing=True):
@@ -74,11 +77,11 @@ def delete_doc(doctype=None, name=None, force=0, ignore_doctypes=None, for_reloa
 
 			delete_from_table(doctype, name, ignore_doctypes, None)
 
-			if not (frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_test):
+			if not (for_reload or frappe.flags.in_migrate or frappe.flags.in_install or frappe.flags.in_test):
 				try:
 					delete_controllers(name, doc.module)
-				except FileNotFoundError:
-					# in case a doctype doesnt have any controller code
+				except (FileNotFoundError, OSError, KeyError):
+					# in case a doctype doesnt have any controller code  nor any app and module
 					pass
 
 		else:
@@ -93,9 +96,6 @@ def delete_doc(doctype=None, name=None, force=0, ignore_doctypes=None, for_reloa
 					doc.flags.in_delete = True
 					doc.run_method('on_change')
 
-				frappe.enqueue('frappe.model.delete_doc.delete_dynamic_links', doctype=doc.doctype, name=doc.name,
-					is_async=False if frappe.flags.in_test else True)
-
 				# check if links exist
 				if not force:
 					check_if_doc_is_linked(doc)
@@ -108,8 +108,22 @@ def delete_doc(doctype=None, name=None, force=0, ignore_doctypes=None, for_reloa
 			# delete attachments
 			remove_all(doctype, name, from_delete=True)
 
+			if not for_reload:
+				# Enqueued at the end, because it gets committed
+				# All the linked docs should be checked beforehand
+				frappe.enqueue('frappe.model.delete_doc.delete_dynamic_links',
+					doctype=doc.doctype, name=doc.name,
+					is_async=False if frappe.flags.in_test else True)
+
+
 		# delete global search entry
 		delete_for_document(doc)
+		# delete tag link entry
+		delete_tags_for_document(doc)
+
+		# update log if doctype has event consumers
+		if not frappe.flags.in_install and not frappe.flags.in_migrate and check_doctype_has_consumers(doc.doctype):
+			make_event_update_log(doc, update_type='Delete')
 
 		if doc and not for_reload:
 			add_to_deleted_document(doc)
@@ -155,6 +169,9 @@ def delete_from_table(doctype, name, ignore_doctypes, doc):
 
 	else:
 		def get_table_fields(field_doctype):
+			if field_doctype == 'Custom Field':
+				return []
+
 			return [r[0] for r in frappe.get_all(field_doctype,
 				fields='options',
 				filters={
@@ -293,6 +310,7 @@ def delete_dynamic_links(doctype, name):
 	delete_references('Comment', doctype, name)
 	delete_references('View Log', doctype, name)
 	delete_references('Document Follow', doctype, name, 'ref_doctype', 'ref_docname')
+	delete_references('Notification Log', doctype, name, 'document_type', 'document_name')
 
 	# unlink communications
 	clear_timeline_references(doctype, name)
@@ -318,8 +336,8 @@ def clear_references(doctype, reference_doctype, reference_name,
 		(reference_doctype, reference_name))
 
 def clear_timeline_references(link_doctype, link_name):
-	frappe.db.sql("""delete from `tabCommunication Link`
-		where `tabCommunication Link`.link_doctype='{0}' and `tabCommunication Link`.link_name='{1}'""".format(link_doctype, link_name)) # nosec
+	frappe.db.sql("""DELETE FROM `tabCommunication Link`
+		WHERE `tabCommunication Link`.link_doctype=%s AND `tabCommunication Link`.link_name=%s""", (link_doctype, link_name))
 
 def insert_feed(doc):
 	from frappe.utils import get_fullname

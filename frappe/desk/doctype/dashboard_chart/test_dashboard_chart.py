@@ -36,14 +36,16 @@ class TestDashboardChart(unittest.TestCase):
 		self.assertEqual(get_period_ending('2019-10-01', 'Quarterly'),
 			getdate('2019-12-31'))
 
+		self.assertEqual(get_period_ending('2019-10-01', 'Yearly'),
+			getdate('2019-12-31'))
+
 	def test_dashboard_chart(self):
 		if frappe.db.exists('Dashboard Chart', 'Test Dashboard Chart'):
 			frappe.delete_doc('Dashboard Chart', 'Test Dashboard Chart')
 
-		chart = frappe.get_doc(dict(
+		frappe.get_doc(dict(
 			doctype = 'Dashboard Chart',
 			chart_name = 'Test Dashboard Chart',
-			name = 'Test Dashboard Chart',
 			chart_type = 'Count',
 			document_type = 'DocType',
 			based_on = 'creation',
@@ -55,7 +57,7 @@ class TestDashboardChart(unittest.TestCase):
 
 		cur_date = datetime.now() - relativedelta(years=1)
 
-		result = get(chart = chart)
+		result = get(chart_name ='Test Dashboard Chart', refresh = 1)
 		for idx in range(13):
 			month = datetime(int(cur_date.year), int(cur_date.strftime('%m')), int(calendar.monthrange(cur_date.year, cur_date.month)[1]))
 			month = formatdate(month.strftime('%Y-%m-%d'))
@@ -73,9 +75,9 @@ class TestDashboardChart(unittest.TestCase):
 
 		frappe.db.sql('delete from `tabError Log`')
 
-		chart = dict(
+		frappe.get_doc(dict(
 			doctype = 'Dashboard Chart',
-			name = 'Test Empty Dashboard Chart',
+			chart_name = 'Test Empty Dashboard Chart',
 			chart_type = 'Count',
 			document_type = 'Error Log',
 			based_on = 'creation',
@@ -83,11 +85,11 @@ class TestDashboardChart(unittest.TestCase):
 			time_interval = 'Monthly',
 			filters_json = '{}',
 			timeseries = 1
-		)
+		)).insert()
 
 		cur_date = datetime.now() - relativedelta(years=1)
 
-		result = get(chart = chart, refresh = 1)
+		result = get(chart_name ='Test Empty Dashboard Chart', refresh = 1)
 		for idx in range(13):
 			month = datetime(int(cur_date.year), int(cur_date.strftime('%m')), int(calendar.monthrange(cur_date.year, cur_date.month)[1]))
 			month = formatdate(month.strftime('%Y-%m-%d'))
@@ -105,9 +107,9 @@ class TestDashboardChart(unittest.TestCase):
 		# create one data point
 		frappe.get_doc(dict(doctype = 'Error Log', creation = '2018-06-01 00:00:00')).insert()
 
-		chart = dict(
+		frappe.get_doc(dict(
 			doctype = 'Dashboard Chart',
-			name = 'Test Empty Dashboard Chart 2',
+			chart_name = 'Test Empty Dashboard Chart 2',
 			chart_type = 'Count',
 			document_type = 'Error Log',
 			based_on = 'creation',
@@ -115,10 +117,11 @@ class TestDashboardChart(unittest.TestCase):
 			time_interval = 'Monthly',
 			filters_json = '{}',
 			timeseries = 1
-		)
+		)).insert()
+
 		cur_date = datetime.now() - relativedelta(years=1)
 
-		result = get(chart = chart, refresh = 1)
+		result = get(chart_name ='Test Empty Dashboard Chart 2', refresh = 1)
 		for idx in range(13):
 			month = datetime(int(cur_date.year), int(cur_date.strftime('%m')), int(calendar.monthrange(cur_date.year, cur_date.month)[1]))
 			month = formatdate(month.strftime('%Y-%m-%d'))
@@ -130,4 +133,24 @@ class TestDashboardChart(unittest.TestCase):
 
 		frappe.db.rollback()
 
+	def test_group_by_chart_type(self):
+		if frappe.db.exists('Dashboard Chart', 'Test Group By Dashboard Chart'):
+			frappe.delete_doc('Dashboard Chart', 'Test Group By Dashboard Chart')
 
+		frappe.get_doc({"doctype":"ToDo", "description": "test"}).insert()
+
+		frappe.get_doc(dict(
+			doctype = 'Dashboard Chart',
+			chart_name = 'Test Group By Dashboard Chart',
+			chart_type = 'Group By',
+			document_type = 'ToDo',
+			group_by_based_on = 'status',
+			filters_json = '{}',
+		)).insert()
+
+		result = get(chart_name ='Test Group By Dashboard Chart', refresh = 1)
+		todo_status_count = frappe.db.count('ToDo', {'status': result.get('labels')[0]})
+
+		self.assertEqual(result.get('datasets')[0].get('values')[0], todo_status_count)
+
+		frappe.db.rollback()

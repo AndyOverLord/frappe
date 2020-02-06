@@ -67,7 +67,6 @@ def add_comment(reference_doctype, reference_name, content, comment_email):
 		comment_type = 'Comment'
 	))
 	doc.content = extract_images_from_html(doc, content)
-	# doc.save()
 	doc.insert(ignore_permissions = True)
 
 	follow_document(doc.reference_doctype, doc.reference_name, frappe.session.user)
@@ -85,7 +84,7 @@ def update_comment(name, content):
 	doc.save(ignore_permissions=True)
 
 @frappe.whitelist()
-def get_next(doctype, value, prev, filters, sort_order, sort_field):
+def get_next(doctype, value, prev, filters=None, sort_order='desc', sort_field='modified'):
 
 	prev = int(prev)
 	if not filters: filters = []
@@ -106,7 +105,7 @@ def get_next(doctype, value, prev, filters, sort_order, sort_field):
 	res = frappe.get_list(doctype,
 		fields = ["name"],
 		filters = filters,
-		order_by = sort_field + " " + sort_order,
+		order_by = "`tab{0}`.{1}".format(doctype, sort_field) + " " + sort_order,
 		limit_start=0, limit_page_length=1, as_list=True)
 
 	if not res:
